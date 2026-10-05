@@ -1,16 +1,21 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs, deleteDoc, doc, runTransaction } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { useAuth } from '../../context/AuthContext';
-import type { InvoiceData } from '../../types';
-import { formatCurrency } from '../../utils/formatters';
+import type { InvoiceData, PaymentRecord } from '../../types';
+import { formatCurrency, generateInvoiceNumber } from '../../utils/formatters';
+import { v4 as uuidv4 } from 'uuid';
 
 export const InvoiceList: React.FC = () => {
   const { currentUser, logout } = useAuth();
   const [invoices, setInvoices] = useState<InvoiceData[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceData | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({ amount: '', date: new Date().toISOString().split('T')[0], method: 'Bank Transfer', reference: '' });
+  const [paymentError, setPaymentError] = useState('');
 
   useEffect(() => {
     const fetchInvoices = async () => {
@@ -68,6 +73,166 @@ export const InvoiceList: React.FC = () => {
     }
   };
 
+  const handleDuplicate = (inv: InvoiceData) => {
+    const duplicated: InvoiceData = {
+      ...inv,
+      id: undefined,
+      status: 'Draft',
+      details: {
+        ...inv.details,
+        invoiceNumber: generateInvoiceNumber(),
+        invoiceDate: new Date().toISOString().split('T')[0]
+      },
+      totals: {
+        ...inv.totals,
+        totalPaid: 0,
+        balanceDue: inv.totals.grandTotal
+      },
+      payments: []
+    };
+    navigate('/', { state: { invoice: duplicated } });
+  };
+
+  const handleOpenPayments = (inv: InvoiceData) => {
+    setSelectedInvoice(inv);
+    setPaymentError('');
+    setPaymentForm({ amount: '', date: new Date().toISOString().split('T')[0], method: 'Bank Transfer', reference: '' });
+    setShowPaymentModal(true);
+  };
+
+  const handleAddPayment = async () => {
+    if (!selectedInvoice?.id) return;
+    const amount = parseFloat(paymentForm.amount);
+    if (isNaN(amount) || amount <= 0) {
+      setPaymentError('Payment amount must be greater than zero.');
+      return;
+    }
+    
+    try {
+      await runTransaction(db, async (t) => {
+        const invRef = doc(db, 'invoices', selectedInvoice.id!);
+        const invSnap = await t.get(invRef);
+        if (!invSnap.exists()) throw new Error('Invoice not found');
+        
+        const data = invSnap.data() as InvoiceData;
+        const currentPaid = data.totals?.totalPaid || 0;
+        const balance = data.totals.grandTotal - currentPaid;
+        
+        if (amount > balance) throw new Error(`Payment exceeds balance due (${formatCurrency(balance, data.details.currency)})`);
+        
+        const newPayment: PaymentRecord = {
+          id: uuidv4(),
+          amount,
+          date: paymentForm.date,
+          method: paymentForm.method,
+          reference: paymentForm.reference
+        };
+        const newPayments = [...(data.payments || []), newPayment];
+        
+        const newTotalPaid = currentPaid + amount;
+        const newBalance = data.totals.grandTotal - newTotalPaid;
+        
+        let newStatus = 'Draft';
+        if (newTotalPaid >= data.totals.grandTotal && data.totals.grandTotal > 0) newStatus = 'Paid';
+        else if (newTotalPaid > 0) newStatus = 'Partially Paid';
+        else newStatus = 'Unpaid';
+        
+        t.update(invRef, {
+          payments: newPayments,
+          'totals.totalPaid': newTotalPaid,
+          'totals.balanceDue': newBalance,
+          status: newStatus
+        });
+      });
+      
+      // Update local state
+      setInvoices(prev => prev.map(inv => {
+        if (inv.id === selectedInvoice.id) {
+          const newTotalPaid = inv.totals.totalPaid + amount;
+          return {
+            ...inv,
+            payments: [...(inv.payments || []), { id: uuidv4(), amount, date: paymentForm.date, method: paymentForm.method, reference: paymentForm.reference }],
+            totals: { ...inv.totals, totalPaid: newTotalPaid, balanceDue: inv.totals.grandTotal - newTotalPaid },
+            status: newTotalPaid >= inv.totals.grandTotal ? 'Paid' : 'Partially Paid'
+          };
+        }
+        return inv;
+      }));
+      
+      const newTotalPaid = selectedInvoice.totals.totalPaid + amount;
+      setSelectedInvoice(prev => prev ? {
+        ...prev,
+        payments: [...(prev.payments || []), { id: uuidv4(), amount, date: paymentForm.date, method: paymentForm.method, reference: paymentForm.reference }],
+        totals: { ...prev.totals, totalPaid: newTotalPaid, balanceDue: prev.totals.grandTotal - newTotalPaid },
+        status: newTotalPaid >= prev.totals.grandTotal ? 'Paid' : 'Partially Paid'
+      } : null);
+      
+      setPaymentForm({ ...paymentForm, amount: '', reference: '' });
+      setPaymentError('');
+    } catch (err: any) {
+      setPaymentError(err.message);
+    }
+  };
+
+  const handleRemovePayment = async (paymentId: string) => {
+    if (!selectedInvoice?.id) return;
+    if (!window.confirm('Remove this payment record?')) return;
+    
+    try {
+      await runTransaction(db, async (t) => {
+        const invRef = doc(db, 'invoices', selectedInvoice.id!);
+        const invSnap = await t.get(invRef);
+        if (!invSnap.exists()) throw new Error('Invoice not found');
+        
+        const data = invSnap.data() as InvoiceData;
+        const targetPayment = data.payments?.find(p => p.id === paymentId);
+        if (!targetPayment) throw new Error('Payment record not found');
+        
+        const newPayments = data.payments.filter(p => p.id !== paymentId);
+        const newTotalPaid = (data.totals?.totalPaid || 0) - targetPayment.amount;
+        const newBalance = data.totals.grandTotal - newTotalPaid;
+        
+        let newStatus = 'Draft';
+        if (newTotalPaid >= data.totals.grandTotal && data.totals.grandTotal > 0) newStatus = 'Paid';
+        else if (newTotalPaid > 0) newStatus = 'Partially Paid';
+        else newStatus = 'Unpaid';
+        
+        t.update(invRef, {
+          payments: newPayments,
+          'totals.totalPaid': newTotalPaid,
+          'totals.balanceDue': newBalance,
+          status: newStatus
+        });
+      });
+      
+      // Update local state
+      const targetAmount = selectedInvoice.payments.find(p => p.id === paymentId)?.amount || 0;
+      setInvoices(prev => prev.map(inv => {
+        if (inv.id === selectedInvoice.id) {
+          const newTotalPaid = inv.totals.totalPaid - targetAmount;
+          return {
+            ...inv,
+            payments: inv.payments.filter(p => p.id !== paymentId),
+            totals: { ...inv.totals, totalPaid: newTotalPaid, balanceDue: inv.totals.grandTotal - newTotalPaid },
+            status: newTotalPaid <= 0 ? 'Unpaid' : (newTotalPaid >= inv.totals.grandTotal ? 'Paid' : 'Partially Paid')
+          };
+        }
+        return inv;
+      }));
+      
+      const newTotalPaid = selectedInvoice.totals.totalPaid - targetAmount;
+      setSelectedInvoice(prev => prev ? {
+        ...prev,
+        payments: prev.payments.filter(p => p.id !== paymentId),
+        totals: { ...prev.totals, totalPaid: newTotalPaid, balanceDue: prev.totals.grandTotal - newTotalPaid },
+        status: newTotalPaid <= 0 ? 'Unpaid' : (newTotalPaid >= prev.totals.grandTotal ? 'Paid' : 'Partially Paid')
+      } : null);
+      
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   return (
     <div className="d-flex flex-column h-100 pb-5">
       {import.meta.env.VITE_FIREBASE_API_KEY === 'AIzaSyDummyKeyForLocalTesting1234567890' && (
@@ -109,6 +274,7 @@ export const InvoiceList: React.FC = () => {
                 <th>Invoice No</th>
                 <th>Client</th>
                 <th>Date</th>
+                <th>Status</th>
                 <th>Total</th>
                 <th className="text-end">Actions</th>
               </tr>
@@ -119,14 +285,22 @@ export const InvoiceList: React.FC = () => {
                   <td className="fw-bold">{inv.details.invoiceNumber}</td>
                   <td>{inv.client.clientName || 'N/A'}</td>
                   <td>{new Date(inv.details.invoiceDate).toLocaleDateString()}</td>
+                  <td>
+                    <span className={`badge ${inv.status === 'Paid' ? 'bg-success' : inv.status === 'Partially Paid' ? 'bg-warning text-dark' : inv.status === 'Unpaid' ? 'bg-danger' : 'bg-secondary'}`}>
+                      {inv.status}
+                    </span>
+                  </td>
                   <td className="fw-bold text-primary">{formatCurrency(inv.totals.grandTotal, inv.details.currency)}</td>
                   <td className="text-end">
-                    <button className="btn btn-sm btn-outline-primary me-2" onClick={() => {
-                      // In a real app, you might use context or local storage to pass the data, 
-                      // or fetch it in the workspace based on URL param. For simplicity, 
-                      // we can pass via state.
-                      navigate('/', { state: { invoice: inv } });
-                    }}>Edit</button>
+                    <button className="btn btn-sm btn-outline-info me-2" onClick={() => handleOpenPayments(inv)} title="Record Payments">
+                      <i className="bi bi-currency-dollar"></i> Pay
+                    </button>
+                    <button className="btn btn-sm btn-outline-secondary me-2" onClick={() => handleDuplicate(inv)} title="Duplicate">
+                      <i className="bi bi-files"></i>
+                    </button>
+                    <button className="btn btn-sm btn-outline-primary me-2" onClick={() => navigate('/', { state: { invoice: inv } })}>
+                      Edit
+                    </button>
                     <button className="btn btn-sm btn-outline-danger" onClick={() => inv.id && handleDelete(inv.id)}>
                       <i className="bi bi-trash"></i>
                     </button>
@@ -138,6 +312,111 @@ export const InvoiceList: React.FC = () => {
         </div>
       )}
       </div>
+
+      {/* Payment Tracking Modal */}
+      {showPaymentModal && selectedInvoice && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg modal-dialog-centered">
+            <div className="modal-content border-0 shadow-lg">
+              <div className="modal-header bg-light">
+                <h5 className="modal-title fw-bold">Payments for {selectedInvoice.details.invoiceNumber}</h5>
+                <button type="button" className="btn-close" onClick={() => setShowPaymentModal(false)}></button>
+              </div>
+              <div className="modal-body">
+                <div className="row mb-4">
+                  <div className="col-4 text-center">
+                    <div className="text-muted small text-uppercase fw-bold">Grand Total</div>
+                    <div className="fs-4 fw-bold">{formatCurrency(selectedInvoice.totals.grandTotal, selectedInvoice.details.currency)}</div>
+                  </div>
+                  <div className="col-4 text-center text-success border-start border-end">
+                    <div className="text-muted small text-uppercase fw-bold">Amount Paid</div>
+                    <div className="fs-4 fw-bold">{formatCurrency(selectedInvoice.totals.totalPaid || 0, selectedInvoice.details.currency)}</div>
+                  </div>
+                  <div className="col-4 text-center text-danger">
+                    <div className="text-muted small text-uppercase fw-bold">Balance Due</div>
+                    <div className="fs-4 fw-bold">{formatCurrency(selectedInvoice.totals.balanceDue || selectedInvoice.totals.grandTotal, selectedInvoice.details.currency)}</div>
+                  </div>
+                </div>
+
+                <div className="card mb-4">
+                  <div className="card-header bg-white fw-bold">Record New Payment</div>
+                  <div className="card-body bg-light">
+                    {paymentError && <div className="alert alert-danger py-2">{paymentError}</div>}
+                    <div className="row g-2 align-items-end">
+                      <div className="col-md-3">
+                        <label className="form-label small">Amount ({selectedInvoice.details.currency})</label>
+                        <input type="number" min="0" step="any" className="form-control form-control-sm" value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: e.target.value})} />
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small">Date</label>
+                        <input type="date" className="form-control form-control-sm" value={paymentForm.date} onChange={e => setPaymentForm({...paymentForm, date: e.target.value})} />
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small">Method</label>
+                        <select className="form-select form-select-sm" value={paymentForm.method} onChange={e => setPaymentForm({...paymentForm, method: e.target.value})}>
+                          <option>Bank Transfer</option>
+                          <option>Cash</option>
+                          <option>Credit Card</option>
+                          <option>Check</option>
+                          <option>UPI / Wallet</option>
+                          <option>Other</option>
+                        </select>
+                      </div>
+                      <div className="col-md-3">
+                        <label className="form-label small">Reference (Opt)</label>
+                        <input type="text" className="form-control form-control-sm" value={paymentForm.reference} onChange={e => setPaymentForm({...paymentForm, reference: e.target.value})} placeholder="Txn ID" />
+                      </div>
+                      <div className="col-12 mt-3 text-end">
+                        <button className="btn btn-sm btn-primary" onClick={handleAddPayment} disabled={!paymentForm.amount}>
+                          Add Payment
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <h6 className="fw-bold mb-3">Payment History</h6>
+                {(!selectedInvoice.payments || selectedInvoice.payments.length === 0) ? (
+                  <p className="text-muted fst-italic">No payments recorded yet.</p>
+                ) : (
+                  <div className="table-responsive">
+                    <table className="table table-sm table-hover align-middle">
+                      <thead className="table-light">
+                        <tr>
+                          <th>Date</th>
+                          <th>Method</th>
+                          <th>Reference</th>
+                          <th className="text-end">Amount</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedInvoice.payments.map(p => (
+                          <tr key={p.id}>
+                            <td>{new Date(p.date).toLocaleDateString()}</td>
+                            <td>{p.method}</td>
+                            <td>{p.reference || '-'}</td>
+                            <td className="text-end fw-bold text-success">{formatCurrency(p.amount, selectedInvoice.details.currency)}</td>
+                            <td className="text-end">
+                              <button className="btn btn-sm btn-outline-danger py-0 px-2" onClick={() => handleRemovePayment(p.id)} title="Remove Payment">
+                                <i className="bi bi-x"></i>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+              </div>
+              <div className="modal-footer border-top-0">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowPaymentModal(false)}>Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

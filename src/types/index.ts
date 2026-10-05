@@ -1,12 +1,27 @@
+export type TemplateId = 'classic' | 'modern' | 'minimal';
+
+export interface UserProfile {
+  displayName: string;
+  phoneNumber?: string;
+  photoURL?: string;
+}
+
 export interface BusinessProfile {
   businessName: string;
   email: string;
   phone: string;
   address: string;
   taxRegistrationNumber: string;
+  logoUrl?: string;
+  defaultCurrency?: string;
+  preferredTemplate?: TemplateId;
+  paymentInstructions?: string;
+  bankDetails?: string;
+  defaultTerms?: string;
 }
 
 export interface ClientDetails {
+  id?: string;
   clientName: string;
   email: string;
   phone: string;
@@ -14,12 +29,28 @@ export interface ClientDetails {
   taxRegistrationNumber: string;
 }
 
+export interface ProductDetails {
+  id?: string;
+  name: string;
+  description: string;
+  unitPrice: number;
+}
+
 export interface LineItem {
   id: string;
+  productId?: string;
   name: string;
   description: string;
   unitPrice: number;
   quantity: number;
+}
+
+export interface PaymentRecord {
+  id: string;
+  amount: number;
+  date: string;
+  method: string;
+  reference?: string;
 }
 
 export interface InvoiceDetails {
@@ -33,18 +64,7 @@ export interface InvoiceDetails {
   taxPercentage: number;
   discountType: 'percentage' | 'fixed';
   discountValue: number;
-}
-
-export interface InvoiceData {
-  id?: string; // Firestore document ID
-  userId: string;
-  business: BusinessProfile;
-  client: ClientDetails;
-  details: InvoiceDetails;
-  items: LineItem[];
-  totals: InvoiceTotals;
-  createdAt?: string;
-  updatedAt?: string;
+  template?: TemplateId;
 }
 
 export interface InvoiceTotals {
@@ -52,6 +72,24 @@ export interface InvoiceTotals {
   discount: number;
   tax: number;
   grandTotal: number;
+  totalPaid: number;
+  balanceDue: number;
+}
+
+export type InvoiceStatus = 'Draft' | 'Unpaid' | 'Partially Paid' | 'Paid';
+
+export interface InvoiceData {
+  id?: string;
+  userId: string;
+  status: InvoiceStatus;
+  business: BusinessProfile;
+  client: ClientDetails;
+  details: InvoiceDetails;
+  items: LineItem[];
+  totals: InvoiceTotals;
+  payments: PaymentRecord[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface SharedInvoiceRecord {

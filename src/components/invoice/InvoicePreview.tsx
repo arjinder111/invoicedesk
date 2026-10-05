@@ -7,11 +7,64 @@ interface InvoicePreviewProps {
 }
 
 export const InvoicePreview: React.FC<InvoicePreviewProps> = ({ invoice }) => {
-  return (
-    <div id="invoice-preview-container" className="invoice-paper text-dark d-flex flex-column h-100 position-relative">
-      {/* Header */}
+  const tpl = invoice.details.template || 'classic';
+
+  const renderLogo = (maxHeight = '80px') => {
+    if (!invoice.business.logoUrl) return null;
+    return (
+      <img 
+        src={invoice.business.logoUrl} 
+        alt="Business Logo" 
+        style={{ maxHeight, maxWidth: '200px', objectFit: 'contain' }} 
+        className="mb-3"
+        crossOrigin="anonymous" 
+      />
+    );
+  };
+
+  const renderHeader = () => {
+    if (tpl === 'modern') {
+      return (
+        <div className="d-flex justify-content-between align-items-center mb-5 p-4 rounded-3" style={{ backgroundColor: '#2563eb', color: '#ffffff' }}>
+          <div>
+            {renderLogo('60px')}
+            <h2 className="mb-1 fw-bold text-white text-uppercase" style={{ letterSpacing: '2px' }}>INVOICE</h2>
+            <p className="mb-0 text-white-50">{invoice.details.invoiceNumber}</p>
+          </div>
+          <div className="text-end text-white">
+            <h5 className="mb-1 fw-bold text-white">{invoice.business.businessName || 'Your Business Name'}</h5>
+            {invoice.business.address && <p className="mb-0 text-white-50" style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>{invoice.business.address}</p>}
+            {invoice.business.email && <p className="mb-0 text-white-50" style={{ fontSize: '0.9rem' }}>{invoice.business.email}</p>}
+            {invoice.business.phone && <p className="mb-0 text-white-50" style={{ fontSize: '0.9rem' }}>{invoice.business.phone}</p>}
+          </div>
+        </div>
+      );
+    }
+    
+    if (tpl === 'minimal') {
+      return (
+        <div className="mb-5 pb-4 border-bottom border-secondary">
+          {renderLogo('80px')}
+          <h1 className="fw-light mb-4" style={{ letterSpacing: '4px' }}>INVOICE</h1>
+          <div className="d-flex justify-content-between">
+            <div>
+              <p className="mb-0 fw-bold">{invoice.business.businessName || 'Your Business Name'}</p>
+              {invoice.business.address && <p className="mb-0 text-muted" style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>{invoice.business.address}</p>}
+            </div>
+            <div className="text-end">
+              <p className="mb-0 text-muted">Invoice No: <span className="text-dark">{invoice.details.invoiceNumber}</span></p>
+              <p className="mb-0 text-muted">Date: <span className="text-dark">{new Date(invoice.details.invoiceDate).toLocaleDateString()}</span></p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Classic (Default)
+    return (
       <div className="d-flex justify-content-between align-items-start mb-5 pb-4 border-bottom border-primary border-2">
         <div className="w-50 pe-3">
+          {renderLogo('80px')}
           <h2 className="text-primary mb-3 text-uppercase fw-bold" style={{ letterSpacing: '2px' }}>INVOICE</h2>
           <h5 className="mb-1 fw-bold">{invoice.business.businessName || 'Your Business Name'}</h5>
           {invoice.business.address && <p className="mb-0 text-muted" style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>{invoice.business.address}</p>}
@@ -41,21 +94,47 @@ export const InvoicePreview: React.FC<InvoicePreviewProps> = ({ invoice }) => {
           </table>
         </div>
       </div>
+    );
+  };
 
-      {/* Bill To */}
-      <div className="mb-5">
-        <h6 className="text-muted text-uppercase fw-bold mb-2" style={{ letterSpacing: '1px' }}>Bill To</h6>
-        <h5 className="mb-1 fw-bold">{invoice.client.clientName || 'Client Name'}</h5>
-        {invoice.client.address && <p className="mb-0 text-muted" style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>{invoice.client.address}</p>}
-        {invoice.client.email && <p className="mb-0 text-muted" style={{ fontSize: '0.9rem' }}>Email: {invoice.client.email}</p>}
-        {invoice.client.phone && <p className="mb-0 text-muted" style={{ fontSize: '0.9rem' }}>Phone: {invoice.client.phone}</p>}
-        {invoice.client.taxRegistrationNumber && <p className="mb-0 text-muted" style={{ fontSize: '0.9rem' }}>Tax No: {invoice.client.taxRegistrationNumber}</p>}
+  return (
+    <div id="invoice-preview-container" className={`invoice-paper text-dark d-flex flex-column h-100 position-relative template-${tpl}`}>
+      
+      {/* Dynamic Status Badge */}
+      {invoice.status && invoice.status !== 'Draft' && (
+        <div className={`position-absolute top-0 end-0 m-4 badge rounded-pill fs-6 ${
+          invoice.status === 'Paid' ? 'bg-success' : 
+          invoice.status === 'Partially Paid' ? 'bg-warning text-dark' : 'bg-danger'
+        }`}>
+          {invoice.status.toUpperCase()}
+        </div>
+      )}
+
+      {renderHeader()}
+
+      {/* Bill To & Details (Modern has specific details placement) */}
+      <div className={`d-flex justify-content-between mb-5 ${tpl === 'minimal' ? 'pt-2' : ''}`}>
+        <div>
+          <h6 className="text-muted text-uppercase fw-bold mb-2" style={{ letterSpacing: '1px' }}>Bill To</h6>
+          <h5 className="mb-1 fw-bold">{invoice.client.clientName || 'Client Name'}</h5>
+          {invoice.client.address && <p className="mb-0 text-muted" style={{ whiteSpace: 'pre-wrap', fontSize: '0.9rem' }}>{invoice.client.address}</p>}
+          {invoice.client.email && <p className="mb-0 text-muted" style={{ fontSize: '0.9rem' }}>Email: {invoice.client.email}</p>}
+          {invoice.client.phone && <p className="mb-0 text-muted" style={{ fontSize: '0.9rem' }}>Phone: {invoice.client.phone}</p>}
+          {invoice.client.taxRegistrationNumber && <p className="mb-0 text-muted" style={{ fontSize: '0.9rem' }}>Tax No: {invoice.client.taxRegistrationNumber}</p>}
+        </div>
+
+        {tpl === 'modern' && (
+          <div className="text-end">
+             <p className="mb-1"><span className="text-muted fw-bold">Date:</span> {new Date(invoice.details.invoiceDate).toLocaleDateString()}</p>
+             {invoice.details.dueDate && <p className="mb-1"><span className="text-muted fw-bold">Due:</span> {new Date(invoice.details.dueDate).toLocaleDateString()}</p>}
+          </div>
+        )}
       </div>
 
       {/* Items Table */}
       <div className="mb-4" style={{ flexGrow: 1 }}>
-        <table className="table table-striped border-top border-bottom">
-        <thead className="table-primary text-primary" style={{ backgroundColor: '#e9ecef' }}>
+        <table className={`table ${tpl === 'minimal' ? 'table-borderless border-bottom' : 'table-striped border-top border-bottom'}`}>
+        <thead className={`${tpl === 'modern' ? 'table-dark text-white' : tpl === 'classic' ? 'table-primary text-primary' : 'border-bottom border-dark'}`} style={tpl === 'classic' ? { backgroundColor: '#e9ecef' } : {}}>
           <tr>
             <th className="py-2">Description</th>
             <th className="py-2 text-center" style={{ width: '80px' }}>Qty</th>
@@ -65,7 +144,7 @@ export const InvoicePreview: React.FC<InvoicePreviewProps> = ({ invoice }) => {
         </thead>
         <tbody>
           {invoice.items.map((item, index) => (
-            <tr key={item.id}>
+            <tr key={item.id} className={tpl === 'minimal' ? 'border-bottom' : ''}>
               <td className="py-3">
                 <div className="fw-bold">{item.name || `Item ${index + 1}`}</div>
                 {item.description && <div className="text-muted" style={{ fontSize: '0.85rem', whiteSpace: 'pre-wrap' }}>{item.description}</div>}
@@ -124,9 +203,29 @@ export const InvoicePreview: React.FC<InvoicePreviewProps> = ({ invoice }) => {
                 </tr>
               )}
               <tr>
-                <td className="fw-bold fs-5 text-primary pt-3 text-nowrap">Grand Total:</td>
-                <td className="fw-bold fs-5 text-primary pt-3 text-nowrap">{formatCurrency(invoice.totals.grandTotal, invoice.details.currency)}</td>
+                <td className="fw-bold fs-6 pt-3 text-nowrap">Total Amount:</td>
+                <td className="fw-bold fs-6 pt-3 text-nowrap">{formatCurrency(invoice.totals.grandTotal, invoice.details.currency)}</td>
               </tr>
+              
+              {/* Payment Info */}
+              {invoice.totals.totalPaid > 0 && (
+                <>
+                  <tr className="text-success">
+                    <td className="fw-bold pb-2 text-nowrap">Amount Paid:</td>
+                    <td className="fw-bold pb-2 text-nowrap">-{formatCurrency(invoice.totals.totalPaid, invoice.details.currency)}</td>
+                  </tr>
+                  <tr className="border-top">
+                    <td className="fw-bold fs-5 text-primary pt-3 text-nowrap">Balance Due:</td>
+                    <td className="fw-bold fs-5 text-primary pt-3 text-nowrap">{formatCurrency(invoice.totals.balanceDue, invoice.details.currency)}</td>
+                  </tr>
+                </>
+              )}
+              {invoice.totals.totalPaid <= 0 && (
+                <tr className="border-top">
+                  <td className="fw-bold fs-5 text-primary pt-3 text-nowrap">Balance Due:</td>
+                  <td className="fw-bold fs-5 text-primary pt-3 text-nowrap">{formatCurrency(invoice.totals.grandTotal, invoice.details.currency)}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

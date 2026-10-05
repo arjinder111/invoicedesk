@@ -1,6 +1,10 @@
 import React from 'react';
 import type { InvoiceData, LineItem } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { useAuth } from '../../context/AuthContext';
+import { db } from '../../firebase/config';
+import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import type { ClientDetails, ProductDetails } from '../../types';
 
 interface InvoiceEditorProps {
   invoice: InvoiceData;
@@ -8,6 +12,21 @@ interface InvoiceEditorProps {
 }
 
 export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoice }) => {
+  const { currentUser } = useAuth();
+  const [clients, setClients] = React.useState<ClientDetails[]>([]);
+  const [products, setProducts] = React.useState<ProductDetails[]>([]);
+  
+  React.useEffect(() => {
+    if (currentUser) {
+      getDocs(collection(db, 'users', currentUser.uid, 'clients')).then(snap => {
+        setClients(snap.docs.map(d => ({ id: d.id, ...d.data() } as ClientDetails)));
+      }).catch(console.error);
+      getDocs(collection(db, 'users', currentUser.uid, 'products')).then(snap => {
+        setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as ProductDetails)));
+      }).catch(console.error);
+    }
+  }, [currentUser]);
+
   const updateBusiness = (field: keyof InvoiceData['business'], value: string) => {
     setInvoice(prev => ({ ...prev, business: { ...prev.business, [field]: value } }));
   };
@@ -40,6 +59,97 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
       ...prev,
       items: prev.items.filter(item => item.id !== id)
     }));
+  };
+
+  const saveCurrentClient = async () => {
+    if (!currentUser || !invoice.client.clientName) return;
+    try {
+      const clientId = invoice.client.id || uuidv4();
+      const clientData = { ...invoice.client, id: clientId };
+      await setDoc(doc(db, 'users', currentUser.uid, 'clients', clientId), clientData);
+      setClients(prev => {
+        const idx = prev.findIndex(c => c.id === clientId);
+        if (idx >= 0) {
+          const newArr = [...prev];
+          newArr[idx] = clientData;
+          return newArr;
+        }
+        return [...prev, clientData];
+      });
+      updateClient('id', clientId);
+      alert('Client saved!');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to save client');
+    }
+  };
+
+  const deleteSavedClient = async (id: string) => {
+    if (!currentUser) return;
+    try {
+      await deleteDoc(doc(db, 'users', currentUser.uid, 'clients', id));
+      setClients(prev => prev.filter(c => c.id !== id));
+      if (invoice.client.id === id) updateClient('id', '');
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleClientSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value;
+    if (!id) {
+      setInvoice(prev => ({ ...prev, client: { clientName: '', email: '', phone: '', address: '', taxRegistrationNumber: '' } }));
+      return;
+    }
+    const selected = clients.find(c => c.id === id);
+    if (selected) {
+      setInvoice(prev => ({ ...prev, client: { ...selected } }));
+    }
+  };
+
+  const saveProduct = async (item: LineItem) => {
+    if (!currentUser || !item.name) return;
+    try {
+      const prodId = item.productId || uuidv4();
+      const prodData: ProductDetails = {
+        id: prodId,
+        name: item.name,
+        description: item.description,
+        unitPrice: item.unitPrice
+      };
+      await setDoc(doc(db, 'users', currentUser.uid, 'products', prodId), prodData);
+      setProducts(prev => {
+        const idx = prev.findIndex(p => p.id === prodId);
+        if (idx >= 0) {
+          const newArr = [...prev];
+          newArr[idx] = prodData;
+          return newArr;
+        }
+        return [...prev, prodData];
+      });
+      updateItem(item.id, 'productId', prodId);
+      alert('Product saved!');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to save product');
+    }
+  };
+
+  const handleProductSelect = (itemId: string, productId: string) => {
+    if (!productId) return;
+    const selected = products.find(p => p.id === productId);
+    if (selected) {
+      setInvoice(prev => ({
+        ...prev,
+        items: prev.items.map(it => it.id === itemId ? {
+          ...it,
+          productId: selected.id,
+          name: selected.name,
+          description: selected.description,
+          unitPrice: selected.unitPrice
+        } : it)
+      }));
+    }
   };
 
   return (
@@ -77,7 +187,25 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
 
       {/* Client Details */}
       <div className="card mb-4 shadow-sm">
-        <div className="card-header bg-light fw-bold">Client (Billed To)</div>
+        <div className="card-header bg-light fw-bold d-flex justify-content-between align-items-center">
+          <span>Client (Billed To)</span>
+          <div className="d-flex gap-2 align-items-center">
+            <select className="form-select form-select-sm w-auto" value={invoice.client.id || ''} onChange={handleClientSelect}>
+              <option value="">-- Load Saved Client --</option>
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>{c.clientName}</option>
+              ))}
+            </select>
+            <button className="btn btn-sm btn-outline-success" onClick={saveCurrentClient} title="Save Client">
+              <i className="bi bi-save"></i> Save
+            </button>
+            {invoice.client.id && (
+               <button className="btn btn-sm btn-outline-danger" onClick={() => deleteSavedClient(invoice.client.id!)} title="Delete Client">
+                 <i className="bi bi-trash"></i>
+               </button>
+            )}
+          </div>
+        </div>
         <div className="card-body">
           <div className="row g-3">
             <div className="col-md-6">
@@ -169,6 +297,17 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
                 {invoice.items.map((item) => (
                   <tr key={item.id} className="border-bottom">
                     <td>
+                      <div className="d-flex gap-2 mb-1">
+                        <select className="form-select form-select-sm w-auto" value={item.productId || ''} onChange={(e) => handleProductSelect(item.id, e.target.value)}>
+                          <option value="">- Saved Product -</option>
+                          {products.map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))}
+                        </select>
+                        <button className="btn btn-sm btn-outline-success py-0" onClick={() => saveProduct(item)} title="Save Product">
+                          <i className="bi bi-save"></i>
+                        </button>
+                      </div>
                       <input type="text" className="form-control mb-1" placeholder="Item name" value={item.name} onChange={(e) => updateItem(item.id, 'name', e.target.value)} />
                       <input type="text" className="form-control form-control-sm text-muted" placeholder="Description (optional)" value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} />
                     </td>

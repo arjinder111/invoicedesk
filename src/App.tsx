@@ -7,6 +7,7 @@ import { Signup } from './components/auth/Signup';
 import { InvoiceWorkspace } from './components/invoice/InvoiceWorkspace';
 import { SharedInvoice } from './components/invoice/SharedInvoice';
 import { InvoiceList } from './components/invoice/InvoiceList';
+import { ProfileSettings } from './components/profile/ProfileSettings';
 
 // Bootstrap CSS & Icons
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -42,6 +43,14 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute>
             <InvoiceList />
+          </ProtectedRoute>
+        } 
+      />
+      <Route 
+        path="/profile" 
+        element={
+          <ProtectedRoute>
+            <ProfileSettings />
           </ProtectedRoute>
         } 
       />

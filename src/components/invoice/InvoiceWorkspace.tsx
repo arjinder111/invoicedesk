@@ -8,10 +8,11 @@ import { InvoiceEditor } from './InvoiceEditor';
 import { InvoicePreview } from './InvoicePreview';
 import { generatePDF } from '../../utils/pdf';
 import { db } from '../../firebase/config';
-import { collection, addDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, setDoc, getDoc } from 'firebase/firestore';
 
 const initialInvoiceData: InvoiceData = {
   userId: '',
+  status: 'Draft',
   business: {
     businessName: '',
     email: '',
@@ -45,8 +46,11 @@ const initialInvoiceData: InvoiceData = {
     subtotal: 0,
     discount: 0,
     tax: 0,
-    grandTotal: 0
-  }
+    grandTotal: 0,
+    totalPaid: 0,
+    balanceDue: 0
+  },
+  payments: []
 };
 
 export const InvoiceWorkspace: React.FC = () => {
@@ -60,6 +64,35 @@ export const InvoiceWorkspace: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [shareLink, setShareLink] = useState('');
+
+  // Load defaults for new invoice
+  useEffect(() => {
+    if (!location.state?.invoice && currentUser) {
+      getDoc(doc(db, 'users', currentUser.uid)).then(docSnap => {
+        if (docSnap.exists() && docSnap.data().businessProfile) {
+          const bp = docSnap.data().businessProfile;
+          setInvoice(prev => ({
+            ...prev,
+            business: {
+              businessName: bp.businessName || '',
+              email: bp.email || '',
+              phone: bp.phone || '',
+              address: bp.address || '',
+              taxRegistrationNumber: bp.taxRegistrationNumber || '',
+              logoUrl: bp.logoUrl || ''
+            },
+            details: {
+              ...prev.details,
+              currency: bp.defaultCurrency || 'INR',
+              template: bp.preferredTemplate || 'classic',
+              paymentInstructions: bp.paymentInstructions || '',
+              terms: bp.defaultTerms || ''
+            }
+          }));
+        }
+      }).catch(console.error);
+    }
+  }, [currentUser, location.state]);
 
   // Calculate totals whenever items or discount/tax changes
   useEffect(() => {
@@ -83,16 +116,33 @@ export const InvoiceWorkspace: React.FC = () => {
     const tax = (afterDiscount * (invoice.details.taxPercentage || 0)) / 100;
     const grandTotal = afterDiscount + tax;
 
+    let totalPaid = 0;
+    (invoice.payments || []).forEach(p => {
+      totalPaid += p.amount;
+    });
+    
+    const balanceDue = grandTotal - totalPaid;
+    
+    let status = invoice.status || 'Draft';
+    if (status !== 'Draft') {
+      if (totalPaid >= grandTotal && grandTotal > 0) status = 'Paid';
+      else if (totalPaid > 0) status = 'Partially Paid';
+      else status = 'Unpaid';
+    }
+
     setInvoice(prev => ({
       ...prev,
+      status,
       totals: {
         subtotal,
         discount,
         tax,
-        grandTotal
+        grandTotal,
+        totalPaid,
+        balanceDue
       }
     }));
-  }, [invoice.items, invoice.details.discountType, invoice.details.discountValue, invoice.details.taxPercentage]);
+  }, [invoice.items, invoice.details.discountType, invoice.details.discountValue, invoice.details.taxPercentage, invoice.payments, invoice.status]);
 
   const handleSave = async () => {
     if (!currentUser) return;
@@ -163,11 +213,13 @@ export const InvoiceWorkspace: React.FC = () => {
           invoiceId: invoice.id,
           userId: currentUser.uid,
           snapshot: {
+            status: invoice.status,
             business: invoice.business,
             client: invoice.client,
             details: invoice.details,
             items: invoice.items,
-            totals: invoice.totals
+            totals: invoice.totals,
+            payments: invoice.payments
           },
           isActive: true,
           createdAt: new Date().toISOString(),
@@ -190,11 +242,13 @@ export const InvoiceWorkspace: React.FC = () => {
         invoiceId: invoice.id,
         userId: currentUser.uid,
         snapshot: {
+          status: invoice.status,
           business: invoice.business,
           client: invoice.client,
           details: invoice.details,
           items: invoice.items,
-          totals: invoice.totals
+          totals: invoice.totals,
+          payments: invoice.payments
         },
         isActive: true,
         createdAt: new Date().toISOString(),
@@ -230,6 +284,9 @@ export const InvoiceWorkspace: React.FC = () => {
           InvoiceDesk
         </a>
         <div className="ms-auto d-flex gap-2 align-items-center">
+          <button className="btn btn-outline-info btn-sm" onClick={() => navigate('/profile')} title="Settings">
+            <i className="bi bi-gear"></i>
+          </button>
           <button className="btn btn-outline-primary btn-sm" onClick={() => navigate('/invoices')}>Saved Invoices</button>
           <button className="btn btn-primary btn-sm" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save'}

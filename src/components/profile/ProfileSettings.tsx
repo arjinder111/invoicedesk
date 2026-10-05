@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { db, storage } from '../../firebase/config';
+import { db } from '../../firebase/config';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { updateProfile, updateEmail, sendPasswordResetEmail, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import type { BusinessProfile, UserProfile } from '../../types';
 
@@ -25,10 +24,12 @@ export const ProfileSettings: React.FC = () => {
   // Business Profile State
   const [business, setBusiness] = useState<BusinessProfile>({
     businessName: '', email: '', phone: '', address: '', taxRegistrationNumber: '',
-    logoUrl: '', defaultCurrency: 'INR', preferredTemplate: 'classic',
+    pan: '', state: '', stateCode: '', msme: '', tagline: '',
+    logoUrl: '', signatureUrl: '', defaultCurrency: 'INR', businessType: 'standard',
     paymentInstructions: '', bankDetails: '', defaultTerms: ''
   });
   const [newLogo, setNewLogo] = useState<File | null>(null);
+  const [newSignature, setNewSignature] = useState<File | null>(null);
 
   // Security State
   const [newEmail, setNewEmail] = useState('');
@@ -52,7 +53,11 @@ export const ProfileSettings: React.FC = () => {
     try {
       const pDoc = await getDoc(doc(db, 'users', currentUser.uid));
       if (pDoc.exists() && pDoc.data().personalProfile) {
-        setPersonal(prev => ({ ...prev, phoneNumber: pDoc.data().personalProfile.phoneNumber || '' }));
+        setPersonal(prev => ({ 
+          ...prev, 
+          phoneNumber: pDoc.data().personalProfile.phoneNumber || '',
+          photoURL: pDoc.data().personalProfile.photoURL || prev.photoURL
+        }));
       }
       if (pDoc.exists() && pDoc.data().businessProfile) {
         setBusiness({ ...business, ...pDoc.data().businessProfile });
@@ -62,6 +67,15 @@ export const ProfileSettings: React.FC = () => {
     }
   };
 
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = error => reject(error);
+    });
+  };
+
   const handlePersonalSave = async () => {
     if (!currentUser) return;
     setLoading(true);
@@ -69,16 +83,19 @@ export const ProfileSettings: React.FC = () => {
     try {
       let photoURL = personal.photoURL;
       if (newPhoto) {
-        if (newPhoto.size > 2 * 1024 * 1024) throw new Error('Photo must be less than 2MB');
-        const photoRef = ref(storage, `users/${currentUser.uid}/profile_${Date.now()}`);
-        await uploadBytes(photoRef, newPhoto);
-        photoURL = await getDownloadURL(photoRef);
+        if (newPhoto.size > 500 * 1024) throw new Error('Photo must be less than 500KB');
+        photoURL = await fileToBase64(newPhoto);
       }
       
-      await updateProfile(currentUser, { displayName: personal.displayName, photoURL });
+      // We only update the display name in Firebase Auth, not the photoURL, 
+      // because Firebase Auth has a strict length limit and rejects large Base64 strings.
+      await updateProfile(currentUser, { displayName: personal.displayName });
       
       await setDoc(doc(db, 'users', currentUser.uid), {
-        personalProfile: { phoneNumber: personal.phoneNumber }
+        personalProfile: { 
+          phoneNumber: personal.phoneNumber,
+          photoURL: photoURL
+        }
       }, { merge: true });
       
       setPersonal(prev => ({ ...prev, photoURL: photoURL || '' }));
@@ -97,20 +114,36 @@ export const ProfileSettings: React.FC = () => {
     setMessage(null);
     try {
       let logoUrl = business.logoUrl;
+      let signatureUrl = business.signatureUrl;
+      
       if (newLogo) {
-        if (newLogo.size > 2 * 1024 * 1024) throw new Error('Logo must be less than 2MB');
-        const logoRef = ref(storage, `users/${currentUser.uid}/logo_${Date.now()}`);
-        await uploadBytes(logoRef, newLogo);
-        logoUrl = await getDownloadURL(logoRef);
+        if (newLogo.size > 500 * 1024) throw new Error('Logo must be less than 500KB');
+        logoUrl = await fileToBase64(newLogo);
+      }
+      
+      if (newSignature) {
+        if (newSignature.size > 500 * 1024) throw new Error('Signature must be less than 500KB');
+        signatureUrl = await fileToBase64(newSignature);
       }
 
-      const updatedBusiness = { ...business, logoUrl };
+      const updatedBusiness = { ...business, logoUrl, signatureUrl };
+      
+      // Clean undefined values to prevent Firestore errors
+      const cleanBusiness: any = {};
+      Object.keys(updatedBusiness).forEach(key => {
+        const val = (updatedBusiness as any)[key];
+        if (val !== undefined) {
+          cleanBusiness[key] = val;
+        }
+      });
+
       await setDoc(doc(db, 'users', currentUser.uid), {
-        businessProfile: updatedBusiness
+        businessProfile: cleanBusiness
       }, { merge: true });
       
-      setBusiness(updatedBusiness);
+      setBusiness(cleanBusiness);
       setNewLogo(null);
+      setNewSignature(null);
       setMessage({ type: 'success', text: 'Business profile updated! These defaults will be used for new invoices.' });
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message });
@@ -198,7 +231,7 @@ export const ProfileSettings: React.FC = () => {
                         <img src={personal.photoURL} alt="Profile" className="rounded-circle object-fit-cover" width="80" height="80" />
                       )}
                       <div>
-                        <label className="form-label text-muted small">Profile Photo (Max 2MB)</label>
+                        <label className="form-label text-muted small">Profile Photo (Max 500KB)</label>
                         <input type="file" className="form-control form-control-sm" accept="image/jpeg, image/png, image/webp" onChange={e => setNewPhoto(e.target.files?.[0] || null)} />
                       </div>
                     </div>
@@ -226,7 +259,7 @@ export const ProfileSettings: React.FC = () => {
                         <img src={business.logoUrl} alt="Logo" className="rounded object-fit-contain border p-1 bg-white" width="100" height="100" />
                       )}
                       <div className="flex-grow-1">
-                        <label className="form-label text-muted small">Business Logo (Max 2MB)</label>
+                        <label className="form-label text-muted small">Business Logo (Max 500KB)</label>
                         <input type="file" className="form-control form-control-sm" accept="image/jpeg, image/png, image/webp" onChange={e => setNewLogo(e.target.files?.[0] || null)} />
                       </div>
                     </div>
@@ -245,12 +278,34 @@ export const ProfileSettings: React.FC = () => {
                         <input type="text" className="form-control" value={business.phone} onChange={e => setBusiness({...business, phone: e.target.value})} />
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label">Tax Reg Number</label>
+                        <label className="form-label">Tax Reg Number (GSTIN)</label>
                         <input type="text" className="form-control" value={business.taxRegistrationNumber} onChange={e => setBusiness({...business, taxRegistrationNumber: e.target.value})} />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label">PAN Number</label>
+                        <input type="text" className="form-control" value={business.pan || ''} onChange={e => setBusiness({...business, pan: e.target.value})} />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label">State</label>
+                        <input type="text" className="form-control" value={business.state || ''} onChange={e => setBusiness({...business, state: e.target.value})} placeholder="e.g. Maharashtra" />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label">State Code</label>
+                        <input type="text" className="form-control" value={business.stateCode || ''} onChange={e => setBusiness({...business, stateCode: e.target.value})} placeholder="e.g. 27" />
                       </div>
                       <div className="col-12">
                         <label className="form-label">Address</label>
                         <textarea className="form-control" rows={2} value={business.address} onChange={e => setBusiness({...business, address: e.target.value})}></textarea>
+                      </div>
+                    </div>
+
+                    <div className="mb-3 d-flex align-items-center gap-3">
+                      {business.signatureUrl && !newSignature && (
+                        <img src={business.signatureUrl} alt="Signature" className="rounded object-fit-contain border p-1 bg-white" width="100" height="50" />
+                      )}
+                      <div className="flex-grow-1">
+                        <label className="form-label text-muted small">Signature Image (Max 500KB)</label>
+                        <input type="file" className="form-control form-control-sm" accept="image/jpeg, image/png, image/webp" onChange={e => setNewSignature(e.target.files?.[0] || null)} />
                       </div>
                     </div>
 
@@ -266,13 +321,25 @@ export const ProfileSettings: React.FC = () => {
                         </select>
                       </div>
                       <div className="col-md-6">
-                        <label className="form-label">Preferred Template</label>
-                        <select className="form-select" value={business.preferredTemplate} onChange={e => setBusiness({...business, preferredTemplate: e.target.value as any})}>
-                          <option value="classic">Classic</option>
-                          <option value="modern">Modern</option>
-                          <option value="minimal">Minimal</option>
+                        <label className="form-label">Business Type</label>
+                        <select className="form-select" value={business.businessType || 'standard'} onChange={e => setBusiness({...business, businessType: e.target.value as any})}>
+                          <option value="standard">Standard (Tax Invoice)</option>
+                          <option value="electrical">Electrical (Appliance Store)</option>
+                          <option value="fertilizer">Fertilizer (Agriculture)</option>
                         </select>
                       </div>
+                      {business.businessType === 'electrical' && (
+                        <>
+                          <div className="col-md-6">
+                            <label className="form-label">MSME Registration Number</label>
+                            <input type="text" className="form-control" value={business.msme || ''} onChange={e => setBusiness({...business, msme: e.target.value})} placeholder="e.g. UDYAM-XX-00-00000" />
+                          </div>
+                          <div className="col-12">
+                            <label className="form-label">Brand Tagline (e.g., Brands Sold)</label>
+                            <input type="text" className="form-control" value={business.tagline || ''} onChange={e => setBusiness({...business, tagline: e.target.value})} placeholder="e.g. SAMSUNG, LG, HAIER, DAIKIN..." />
+                          </div>
+                        </>
+                      )}
                       <div className="col-12">
                         <label className="form-label">Payment Instructions</label>
                         <textarea className="form-control" rows={2} value={business.paymentInstructions} onChange={e => setBusiness({...business, paymentInstructions: e.target.value})}></textarea>

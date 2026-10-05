@@ -46,6 +46,7 @@ const initialInvoiceData: InvoiceData = {
     subtotal: 0,
     discount: 0,
     tax: 0,
+    roundOff: 0,
     grandTotal: 0,
     totalPaid: 0,
     balanceDue: 0
@@ -79,12 +80,24 @@ export const InvoiceWorkspace: React.FC = () => {
               phone: bp.phone || '',
               address: bp.address || '',
               taxRegistrationNumber: bp.taxRegistrationNumber || '',
-              logoUrl: bp.logoUrl || ''
+              pan: bp.pan || '',
+              state: bp.state || '',
+              stateCode: bp.stateCode || '',
+              msme: bp.msme || '',
+              tagline: bp.tagline || '',
+              logoUrl: bp.logoUrl || '',
+              signatureUrl: bp.signatureUrl || '',
+              bankDetails: bp.bankDetails || '',
+              businessType: bp.businessType || 'standard',
+              defaultCurrency: bp.defaultCurrency || 'INR',
+              paymentInstructions: bp.paymentInstructions || '',
+              defaultTerms: bp.defaultTerms || ''
             },
             details: {
               ...prev.details,
               currency: bp.defaultCurrency || 'INR',
-              template: bp.preferredTemplate || 'classic',
+              template: bp.businessType === 'electrical' ? 'electrical' : (bp.businessType === 'fertilizer' ? 'fertilizer' : 'shop'),
+              invoiceMode: bp.businessType || 'standard',
               paymentInstructions: bp.paymentInstructions || '',
               terms: bp.defaultTerms || ''
             }
@@ -97,8 +110,34 @@ export const InvoiceWorkspace: React.FC = () => {
   // Calculate totals whenever items or discount/tax changes
   useEffect(() => {
     let subtotal = 0;
+    let totalTax = 0;
+    
     invoice.items.forEach(item => {
-      subtotal += (item.unitPrice || 0) * (item.quantity || 0);
+      // Determine billable quantity
+      let billableQty = item.quantity || 0;
+      if (invoice.details.invoiceMode === 'fertilizer' && item.billingUnit === 'weight') {
+        billableQty = (item.packs || 0) * (item.weightPerPack || 0);
+      } else if (invoice.details.invoiceMode === 'fertilizer' && item.billingUnit === 'pack') {
+        billableQty = item.packs || 0;
+      }
+      
+      const rate = item.unitPrice || 0;
+      const amount = billableQty * rate;
+      
+      let itemSubtotal = amount;
+      let itemTax = 0;
+      const taxRate = item.taxRate || 0;
+      
+      if (item.taxInclusive && taxRate > 0) {
+        // Reverse calculate tax
+        itemSubtotal = amount / (1 + taxRate / 100);
+        itemTax = amount - itemSubtotal;
+      } else if (taxRate > 0) {
+        itemTax = (amount * taxRate) / 100;
+      }
+      
+      subtotal += itemSubtotal;
+      totalTax += itemTax;
     });
 
     let discount = 0;
@@ -113,8 +152,13 @@ export const InvoiceWorkspace: React.FC = () => {
     }
 
     const afterDiscount = subtotal - discount;
-    const tax = (afterDiscount * (invoice.details.taxPercentage || 0)) / 100;
-    const grandTotal = afterDiscount + tax;
+    const globalTax = (afterDiscount * (invoice.details.taxPercentage || 0)) / 100;
+    
+    // We add item-specific tax and global tax
+    const combinedTax = totalTax + globalTax;
+    const exactTotal = afterDiscount + combinedTax;
+    const grandTotal = Math.round(exactTotal);
+    const roundOff = grandTotal - exactTotal;
 
     let totalPaid = 0;
     (invoice.payments || []).forEach(p => {
@@ -136,13 +180,14 @@ export const InvoiceWorkspace: React.FC = () => {
       totals: {
         subtotal,
         discount,
-        tax,
+        tax: combinedTax,
+        roundOff,
         grandTotal,
         totalPaid,
         balanceDue
       }
     }));
-  }, [invoice.items, invoice.details.discountType, invoice.details.discountValue, invoice.details.taxPercentage, invoice.payments, invoice.status]);
+  }, [invoice.items, invoice.details.discountType, invoice.details.discountValue, invoice.details.taxPercentage, invoice.payments, invoice.status, invoice.details.invoiceMode]);
 
   const handleSave = async () => {
     if (!currentUser) return;

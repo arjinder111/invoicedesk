@@ -1,4 +1,4 @@
-export type TemplateId = 'classic' | 'modern' | 'minimal';
+export type TemplateId = 'classic' | 'modern' | 'minimal' | 'shop' | 'electrical' | 'fertilizer';
 
 export interface UserProfile {
   displayName: string;
@@ -11,10 +11,16 @@ export interface BusinessProfile {
   email: string;
   phone: string;
   address: string;
-  taxRegistrationNumber: string;
+  taxRegistrationNumber: string; // GSTIN
+  pan?: string;
+  state?: string;
+  stateCode?: string;
+  msme?: string;
+  tagline?: string;
   logoUrl?: string;
+  signatureUrl?: string;
   defaultCurrency?: string;
-  preferredTemplate?: TemplateId;
+  businessType?: 'standard' | 'electrical' | 'fertilizer';
   paymentInstructions?: string;
   bankDetails?: string;
   defaultTerms?: string;
@@ -26,7 +32,10 @@ export interface ClientDetails {
   email: string;
   phone: string;
   address: string;
-  taxRegistrationNumber: string;
+  taxRegistrationNumber: string; // GSTIN
+  pan?: string;
+  state?: string;
+  stateCode?: string;
 }
 
 export interface ProductDetails {
@@ -34,6 +43,10 @@ export interface ProductDetails {
   name: string;
   description: string;
   unitPrice: number;
+  hsn?: string;
+  unit?: string;
+  taxRate?: number;
+  taxInclusive?: boolean;
 }
 
 export interface LineItem {
@@ -43,6 +56,25 @@ export interface LineItem {
   description: string;
   unitPrice: number;
   quantity: number;
+  hsn?: string;
+  unit?: string;
+  taxRate?: number;
+  taxInclusive?: boolean;
+  
+  // Electrical fields
+  modelNumber?: string;
+  serialNumber?: string;
+  
+  // Fertilizer fields
+  company?: string;
+  technicalName?: string;
+  crop?: string;
+  batchNumber?: string;
+  mfgDate?: string;
+  expDate?: string;
+  packs?: number;
+  weightPerPack?: number;
+  billingUnit?: 'pack' | 'weight' | 'unit';
 }
 
 export interface PaymentRecord {
@@ -65,12 +97,15 @@ export interface InvoiceDetails {
   discountType: 'percentage' | 'fixed';
   discountValue: number;
   template?: TemplateId;
+  placeOfSupply?: string;
+  invoiceMode?: 'standard' | 'electrical' | 'fertilizer';
 }
 
 export interface InvoiceTotals {
   subtotal: number;
   discount: number;
   tax: number;
+  roundOff: number;
   grandTotal: number;
   totalPaid: number;
   balanceDue: number;

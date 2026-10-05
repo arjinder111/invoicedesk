@@ -227,6 +227,15 @@ h1, h2, h3, h4, h5, h6 {
   margin-bottom: 6px;
 }
 
+.editor-pane .form-label {
+  color: #ffffff;
+}
+
+.bg-light .form-label {
+  color: #1e293b; /* dark slate for light background */
+  font-weight: 600;
+}
+
 .form-control, .form-select {
   background-color: var(--input-bg);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -241,6 +250,21 @@ h1, h2, h3, h4, h5, h6 {
   border-color: var(--primary-color);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
   color: white;
+}
+
+.form-control::placeholder,
+.form-select::placeholder {
+  color: rgba(255, 255, 255, 0.7) !important;
+  opacity: 1;
+}
+
+/* Ensure headings and muted text in dark mode editor are brighter */
+.editor-pane h1, .editor-pane h2, .editor-pane h3, .editor-pane h4, .editor-pane h5, .editor-pane h6 {
+  color: #ffffff !important;
+}
+
+.editor-pane .text-muted, .editor-pane label.text-muted {
+  color: rgba(255, 255, 255, 0.8) !important;
 }
 
 /* Tables in Dark Mode Components */

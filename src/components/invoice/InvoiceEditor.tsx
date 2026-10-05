@@ -1,10 +1,10 @@
 import React from 'react';
-import type { InvoiceData, LineItem } from '../../types';
+import { Link } from 'react-router-dom';
+import type { InvoiceData, LineItem, ClientDetails, ProductDetails } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
 import { useAuth } from '../../context/AuthContext';
 import { db } from '../../firebase/config';
 import { collection, getDocs, doc, setDoc, deleteDoc } from 'firebase/firestore';
-import type { ClientDetails, ProductDetails } from '../../types';
 
 interface InvoiceEditorProps {
   invoice: InvoiceData;
@@ -27,19 +27,23 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
     }
   }, [currentUser]);
 
-  const updateBusiness = (field: keyof InvoiceData['business'], value: string) => {
-    setInvoice(prev => ({ ...prev, business: { ...prev.business, [field]: value } }));
-  };
-
   const updateClient = (field: keyof InvoiceData['client'], value: string) => {
-    setInvoice(prev => ({ ...prev, client: { ...prev.client, [field]: value } }));
+    setInvoice(prev => {
+      const newClient = { ...prev.client, [field]: value };
+      // Auto-populate placeOfSupply based on client state if placeOfSupply is empty
+      let newPlaceOfSupply = prev.details.placeOfSupply;
+      if (field === 'state' && (!newPlaceOfSupply || newPlaceOfSupply === prev.client.state)) {
+        newPlaceOfSupply = value;
+      }
+      return { ...prev, client: newClient, details: { ...prev.details, placeOfSupply: newPlaceOfSupply || prev.details.placeOfSupply } };
+    });
   };
 
-  const updateDetails = (field: keyof InvoiceData['details'], value: string | number) => {
+  const updateDetails = (field: keyof InvoiceData['details'], value: any) => {
     setInvoice(prev => ({ ...prev, details: { ...prev.details, [field]: value } }));
   };
 
-  const updateItem = (id: string, field: keyof LineItem, value: string | number) => {
+  const updateItem = (id: string, field: keyof LineItem, value: any) => {
     setInvoice(prev => ({
       ...prev,
       items: prev.items.map(item => item.id === id ? { ...item, [field]: value } : item)
@@ -49,7 +53,10 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
   const addItem = () => {
     setInvoice(prev => ({
       ...prev,
-      items: [...prev.items, { id: uuidv4(), name: '', description: '', unitPrice: 0, quantity: 1 }]
+      items: [...prev.items, { 
+        id: uuidv4(), name: '', description: '', unitPrice: 0, quantity: 1,
+        taxInclusive: false, taxRate: 0, packs: 0, weightPerPack: 0, billingUnit: 'unit'
+      }]
     }));
   };
 
@@ -98,12 +105,16 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
   const handleClientSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = e.target.value;
     if (!id) {
-      setInvoice(prev => ({ ...prev, client: { clientName: '', email: '', phone: '', address: '', taxRegistrationNumber: '' } }));
+      setInvoice(prev => ({ ...prev, client: { clientName: '', email: '', phone: '', address: '', taxRegistrationNumber: '', state: '', stateCode: '' } }));
       return;
     }
     const selected = clients.find(c => c.id === id);
     if (selected) {
-      setInvoice(prev => ({ ...prev, client: { ...selected } }));
+      setInvoice(prev => ({ 
+        ...prev, 
+        client: { ...selected },
+        details: { ...prev.details, placeOfSupply: selected.state || prev.details.placeOfSupply }
+      }));
     }
   };
 
@@ -115,7 +126,11 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
         id: prodId,
         name: item.name,
         description: item.description,
-        unitPrice: item.unitPrice
+        unitPrice: item.unitPrice,
+        hsn: item.hsn,
+        unit: item.unit,
+        taxRate: item.taxRate,
+        taxInclusive: item.taxInclusive
       };
       await setDoc(doc(db, 'users', currentUser.uid, 'products', prodId), prodData);
       setProducts(prev => {
@@ -146,61 +161,56 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
           productId: selected.id,
           name: selected.name,
           description: selected.description,
-          unitPrice: selected.unitPrice
+          unitPrice: selected.unitPrice,
+          hsn: selected.hsn || '',
+          unit: selected.unit || '',
+          taxRate: selected.taxRate || 0,
+          taxInclusive: selected.taxInclusive || false
         } : it)
       }));
     }
   };
 
+  const hasEssentialBusinessDetails = invoice.business.businessName && invoice.business.address;
+
   return (
     <div className="pb-5">
       <h4 className="mb-4 text-primary">Invoice Details</h4>
 
-      {/* Business Details */}
+      {/* Business Details (Read Only / Warning) */}
       <div className="card mb-4 shadow-sm">
         <div className="card-header bg-light fw-bold">Business (Your Details)</div>
         <div className="card-body">
-          <div className="row g-3">
-            <div className="col-md-6">
-              <label className="form-label">Business Name</label>
-              <input type="text" className="form-control" value={invoice.business.businessName} onChange={(e) => updateBusiness('businessName', e.target.value)} />
+          {!hasEssentialBusinessDetails ? (
+            <div className="alert alert-warning mb-0">
+              <i className="bi bi-exclamation-triangle me-2"></i>
+              Your business details are incomplete. <Link to="/profile" className="alert-link">Click here to complete Settings</Link>.
             </div>
-            <div className="col-md-6">
-              <label className="form-label">Email</label>
-              <input type="email" className="form-control" value={invoice.business.email} onChange={(e) => updateBusiness('email', e.target.value)} />
+          ) : (
+            <div className="alert alert-info mb-0">
+              <i className="bi bi-info-circle me-2"></i>
+              Business details populated from Settings. <Link to="/profile" className="alert-link">Edit Settings</Link>.
             </div>
-            <div className="col-md-6">
-              <label className="form-label">Phone</label>
-              <input type="text" className="form-control" value={invoice.business.phone} onChange={(e) => updateBusiness('phone', e.target.value)} />
-            </div>
-            <div className="col-md-6">
-              <label className="form-label">Tax Reg. Number</label>
-              <input type="text" className="form-control" value={invoice.business.taxRegistrationNumber} onChange={(e) => updateBusiness('taxRegistrationNumber', e.target.value)} placeholder="Optional" />
-            </div>
-            <div className="col-12">
-              <label className="form-label">Address</label>
-              <textarea className="form-control" rows={2} value={invoice.business.address} onChange={(e) => updateBusiness('address', e.target.value)}></textarea>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
       {/* Client Details */}
       <div className="card mb-4 shadow-sm">
         <div className="card-header bg-light fw-bold d-flex justify-content-between align-items-center">
-          <span>Client (Billed To)</span>
+          <span>Customer (Billed To)</span>
           <div className="d-flex gap-2 align-items-center">
             <select className="form-select form-select-sm w-auto" value={invoice.client.id || ''} onChange={handleClientSelect}>
-              <option value="">-- Load Saved Client --</option>
+              <option value="">-- Load Saved Customer --</option>
               {clients.map(c => (
                 <option key={c.id} value={c.id}>{c.clientName}</option>
               ))}
             </select>
-            <button className="btn btn-sm btn-outline-success" onClick={saveCurrentClient} title="Save Client">
+            <button className="btn btn-sm btn-outline-success" onClick={saveCurrentClient} title="Save Customer">
               <i className="bi bi-save"></i> Save
             </button>
             {invoice.client.id && (
-               <button className="btn btn-sm btn-outline-danger" onClick={() => deleteSavedClient(invoice.client.id!)} title="Delete Client">
+               <button className="btn btn-sm btn-outline-danger" onClick={() => deleteSavedClient(invoice.client.id!)} title="Delete Customer">
                  <i className="bi bi-trash"></i>
                </button>
             )}
@@ -209,7 +219,7 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
         <div className="card-body">
           <div className="row g-3">
             <div className="col-md-6">
-              <label className="form-label">Client Name</label>
+              <label className="form-label">Customer Name</label>
               <input type="text" className="form-control" value={invoice.client.clientName} onChange={(e) => updateClient('clientName', e.target.value)} />
             </div>
             <div className="col-md-6">
@@ -221,8 +231,16 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
               <input type="text" className="form-control" value={invoice.client.phone} onChange={(e) => updateClient('phone', e.target.value)} />
             </div>
             <div className="col-md-6">
-              <label className="form-label">Tax Reg. Number</label>
+              <label className="form-label">GSTIN / Tax Reg</label>
               <input type="text" className="form-control" value={invoice.client.taxRegistrationNumber} onChange={(e) => updateClient('taxRegistrationNumber', e.target.value)} placeholder="Optional" />
+            </div>
+            <div className="col-md-6">
+              <label className="form-label">State</label>
+              <input type="text" className="form-control" value={invoice.client.state || ''} onChange={(e) => updateClient('state', e.target.value)} />
+            </div>
+            <div className="col-md-6">
+              <label className="form-label">State Code</label>
+              <input type="text" className="form-control" value={invoice.client.stateCode || ''} onChange={(e) => updateClient('stateCode', e.target.value)} />
             </div>
             <div className="col-12">
               <label className="form-label">Address</label>
@@ -250,6 +268,18 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
               <input type="date" className="form-control" value={invoice.details.dueDate} onChange={(e) => updateDetails('dueDate', e.target.value)} />
             </div>
             <div className="col-md-4">
+              <label className="form-label">Invoice Mode</label>
+              <select className="form-select" value={invoice.details.invoiceMode || 'standard'} onChange={(e) => updateDetails('invoiceMode', e.target.value)}>
+                <option value="standard">Standard</option>
+                <option value="electrical">Electrical</option>
+                <option value="fertilizer">Fertilizer</option>
+              </select>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">Place of Supply</label>
+              <input type="text" className="form-control" value={invoice.details.placeOfSupply || ''} onChange={(e) => updateDetails('placeOfSupply', e.target.value)} />
+            </div>
+            <div className="col-md-4">
               <label className="form-label">Currency</label>
               <select className="form-select" value={invoice.details.currency} onChange={(e) => updateDetails('currency', e.target.value)}>
                 <option value="INR">INR (₹)</option>
@@ -270,7 +300,7 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
               <input type="number" min="0" step="any" className="form-control" value={invoice.details.discountValue} onChange={(e) => updateDetails('discountValue', parseFloat(e.target.value) || 0)} />
             </div>
             <div className="col-md-4">
-              <label className="form-label">Tax (%)</label>
+              <label className="form-label">Global Tax (%)</label>
               <input type="number" min="0" max="100" step="any" className="form-control" value={invoice.details.taxPercentage} onChange={(e) => updateDetails('taxPercentage', parseFloat(e.target.value) || 0)} />
             </div>
           </div>
@@ -287,9 +317,8 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
             <table className="table mb-0 table-borderless align-middle">
               <thead className="table-light">
                 <tr>
-                  <th>Item</th>
-                  <th style={{ width: '120px' }}>Qty</th>
-                  <th style={{ width: '150px' }}>Price</th>
+                  <th>Product Details</th>
+                  <th style={{ width: '120px' }}>Pricing</th>
                   <th style={{ width: '50px' }}></th>
                 </tr>
               </thead>
@@ -297,7 +326,7 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
                 {invoice.items.map((item) => (
                   <tr key={item.id} className="border-bottom">
                     <td>
-                      <div className="d-flex gap-2 mb-1">
+                      <div className="d-flex gap-2 mb-2">
                         <select className="form-select form-select-sm w-auto" value={item.productId || ''} onChange={(e) => handleProductSelect(item.id, e.target.value)}>
                           <option value="">- Saved Product -</option>
                           {products.map(p => (
@@ -308,16 +337,91 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
                           <i className="bi bi-save"></i>
                         </button>
                       </div>
-                      <input type="text" className="form-control mb-1" placeholder="Item name" value={item.name} onChange={(e) => updateItem(item.id, 'name', e.target.value)} />
-                      <input type="text" className="form-control form-control-sm text-muted" placeholder="Description (optional)" value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} />
+                      
+                      <div className="row g-2 mb-2">
+                        <div className="col-sm-8">
+                          <input type="text" className="form-control form-control-sm" placeholder="Item name" value={item.name} onChange={(e) => updateItem(item.id, 'name', e.target.value)} />
+                        </div>
+                        <div className="col-sm-4">
+                          <input type="text" className="form-control form-control-sm" placeholder="HSN" value={item.hsn || ''} onChange={(e) => updateItem(item.id, 'hsn', e.target.value)} />
+                        </div>
+                      </div>
+                      <input type="text" className="form-control form-control-sm text-muted mb-2" placeholder="Description (optional)" value={item.description} onChange={(e) => updateItem(item.id, 'description', e.target.value)} />
+                      
+                      {invoice.details.invoiceMode === 'electrical' && (
+                        <div className="row g-2 mb-2">
+                          <div className="col-sm-6"><input type="text" className="form-control form-control-sm text-muted" placeholder="Model Number" value={item.modelNumber || ''} onChange={(e) => updateItem(item.id, 'modelNumber', e.target.value)} /></div>
+                          <div className="col-sm-6"><input type="text" className="form-control form-control-sm text-muted" placeholder="Serial Number" value={item.serialNumber || ''} onChange={(e) => updateItem(item.id, 'serialNumber', e.target.value)} /></div>
+                        </div>
+                      )}
+
+                      {invoice.details.invoiceMode === 'fertilizer' && (
+                        <>
+                          <div className="row g-2 mb-2">
+                            <div className="col-sm-6"><input type="text" className="form-control form-control-sm text-muted" placeholder="Company" value={item.company || ''} onChange={(e) => updateItem(item.id, 'company', e.target.value)} /></div>
+                            <div className="col-sm-6"><input type="text" className="form-control form-control-sm text-muted" placeholder="Technical Name" value={item.technicalName || ''} onChange={(e) => updateItem(item.id, 'technicalName', e.target.value)} /></div>
+                          </div>
+                          <div className="row g-2 mb-2">
+                            <div className="col-sm-3"><input type="text" className="form-control form-control-sm text-muted" placeholder="Crop" value={item.crop || ''} onChange={(e) => updateItem(item.id, 'crop', e.target.value)} /></div>
+                            <div className="col-sm-3"><input type="text" className="form-control form-control-sm text-muted" placeholder="Batch No" value={item.batchNumber || ''} onChange={(e) => updateItem(item.id, 'batchNumber', e.target.value)} /></div>
+                            <div className="col-sm-3">
+                              <label className="small text-muted mb-0">Mfg Date</label>
+                              <input type="date" className="form-control form-control-sm" value={item.mfgDate || ''} onChange={(e) => updateItem(item.id, 'mfgDate', e.target.value)} />
+                            </div>
+                            <div className="col-sm-3">
+                              <label className="small text-muted mb-0">Exp Date</label>
+                              <input type="date" className="form-control form-control-sm" value={item.expDate || ''} onChange={(e) => updateItem(item.id, 'expDate', e.target.value)} />
+                            </div>
+                          </div>
+                        </>
+                      )}
+
                     </td>
                     <td>
-                      <input type="number" min="0" step="any" className="form-control" value={item.quantity} onChange={(e) => updateItem(item.id, 'quantity', parseFloat(e.target.value) || 0)} />
+                      <div className="mb-2">
+                        <label className="small text-muted">Rate</label>
+                        <input type="number" min="0" step="any" className="form-control form-control-sm" value={item.unitPrice} onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)} />
+                      </div>
+                      
+                      {invoice.details.invoiceMode === 'fertilizer' ? (
+                        <div className="row g-1 mb-2">
+                          <div className="col-12">
+                            <label className="small text-muted">Bill By</label>
+                            <select className="form-select form-select-sm" value={item.billingUnit || 'pack'} onChange={(e) => updateItem(item.id, 'billingUnit', e.target.value)}>
+                              <option value="pack">Pack</option>
+                              <option value="weight">Weight/Vol</option>
+                            </select>
+                          </div>
+                          <div className="col-6">
+                            <label className="small text-muted">Packs</label>
+                            <input type="number" min="0" step="any" className="form-control form-control-sm" value={item.packs || 0} onChange={(e) => updateItem(item.id, 'packs', parseFloat(e.target.value) || 0)} />
+                          </div>
+                          <div className="col-6">
+                            <label className="small text-muted">Wgt/Pack</label>
+                            <input type="number" min="0" step="any" className="form-control form-control-sm" value={item.weightPerPack || 0} onChange={(e) => updateItem(item.id, 'weightPerPack', parseFloat(e.target.value) || 0)} />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mb-2">
+                          <label className="small text-muted">Qty</label>
+                          <input type="number" min="0" step="any" className="form-control form-control-sm" value={item.quantity} onChange={(e) => updateItem(item.id, 'quantity', parseFloat(e.target.value) || 0)} />
+                        </div>
+                      )}
+
+                      <div className="mb-2">
+                        <label className="small text-muted">Unit (e.g. kg, pcs)</label>
+                        <input type="text" className="form-control form-control-sm" value={item.unit || ''} onChange={(e) => updateItem(item.id, 'unit', e.target.value)} />
+                      </div>
+                      <div className="mb-2">
+                        <label className="small text-muted">Item Tax (%)</label>
+                        <input type="number" min="0" max="100" step="any" className="form-control form-control-sm" value={item.taxRate || 0} onChange={(e) => updateItem(item.id, 'taxRate', parseFloat(e.target.value) || 0)} />
+                      </div>
+                      <div className="form-check form-switch mt-1">
+                        <input className="form-check-input" type="checkbox" checked={item.taxInclusive || false} onChange={(e) => updateItem(item.id, 'taxInclusive', e.target.checked)} />
+                        <label className="form-check-label small text-muted">Tax Inclusive</label>
+                      </div>
                     </td>
-                    <td>
-                      <input type="number" min="0" step="any" className="form-control" value={item.unitPrice} onChange={(e) => updateItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)} />
-                    </td>
-                    <td className="text-center">
+                    <td className="text-center align-top pt-4">
                       <button className="btn btn-outline-danger btn-sm" onClick={() => removeItem(item.id)} disabled={invoice.items.length === 1} title="Remove item">
                         <i className="bi bi-trash"></i>
                       </button>

@@ -48,7 +48,7 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
 
       {/* Business Details */}
       <div className="card mb-4 shadow-sm">
-        <div className="card-header bg-light fw-bold">Business dd (Your Details)</div>
+        <div className="card-header bg-light fw-bold">Business (Your Details)</div>
         <div className="card-body">
           <div className="row g-3">
             <div className="col-md-6">

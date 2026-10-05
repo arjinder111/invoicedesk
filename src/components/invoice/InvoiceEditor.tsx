@@ -45,10 +45,10 @@ export const InvoiceEditor: React.FC<InvoiceEditorProps> = ({ invoice, setInvoic
   return (
     <div className="pb-5">
       <h4 className="mb-4 text-primary">Invoice Details</h4>
-      
+
       {/* Business Details */}
       <div className="card mb-4 shadow-sm">
-        <div className="card-header bg-light fw-bold">Business (Your Details)</div>
+        <div className="card-header bg-light fw-bold">Business dd (Your Details)</div>
         <div className="card-body">
           <div className="row g-3">
             <div className="col-md-6">
